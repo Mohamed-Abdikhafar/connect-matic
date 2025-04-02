@@ -246,7 +246,8 @@ const ScanCard = () => {
         company: scanResult.company,
         website: scanResult.website,
         position: scanResult.position,
-        notes
+        notes,
+        tags: [] // Added missing tags property
       });
       
       toast({
@@ -434,8 +435,8 @@ const ScanCard = () => {
                     <Label htmlFor="name">Name</Label>
                     <Input 
                       id="name" 
-                      value={scanResult.name} 
-                      onChange={e => setScanResult({...scanResult, name: e.target.value})}
+                      value={scanResult.full_name} 
+                      onChange={e => setScanResult({...scanResult, full_name: e.target.value})}
                     />
                   </div>
                   <div className="space-y-2">
@@ -510,7 +511,7 @@ const ScanCard = () => {
             <div className="space-y-4">
               <h2 className="text-xl font-medium">Add Synergy Notes</h2>
               <p className="text-muted-foreground">
-                Capture why you want to follow up with {scanResult.name}. These notes will help generate personalized follow-up emails.
+                Capture why you want to follow up with {scanResult.full_name}. These notes will help generate personalized follow-up emails.
               </p>
               
               <div className="space-y-2">
