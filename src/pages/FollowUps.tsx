@@ -19,12 +19,13 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const FollowUps = () => {
-  const { emails, contacts } = useData();
+  const { emails, contacts, loading } = useData();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   
@@ -56,6 +57,16 @@ const FollowUps = () => {
     return new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime();
   });
   
+  // Show loading state if data is being fetched
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
+        <p className="text-muted-foreground">Loading follow-up emails...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">

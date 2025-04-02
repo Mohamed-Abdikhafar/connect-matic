@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useAuth } from "./AuthContext";
 import { useToast } from "../hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface Contact {
   id: string;
@@ -29,16 +30,18 @@ export interface Email {
 interface DataContextType {
   contacts: Contact[];
   emails: Email[];
-  addContact: (contact: Omit<Contact, "id" | "createdAt">) => void;
-  updateContact: (id: string, contact: Partial<Omit<Contact, "id" | "createdAt">>) => void;
-  deleteContact: (id: string) => void;
-  addEmail: (email: Omit<Email, "id" | "createdAt">) => void;
-  updateEmail: (id: string, email: Partial<Omit<Email, "id" | "createdAt">>) => void;
-  deleteEmail: (id: string) => void;
+  loading: boolean;
+  addContact: (contact: Omit<Contact, "id" | "createdAt">) => Promise<string | undefined>;
+  updateContact: (id: string, contact: Partial<Omit<Contact, "id" | "createdAt">>) => Promise<void>;
+  deleteContact: (id: string) => Promise<void>;
+  addEmail: (email: Omit<Email, "id" | "createdAt">) => Promise<string | undefined>;
+  updateEmail: (id: string, email: Partial<Omit<Email, "id" | "createdAt">>) => Promise<void>;
+  deleteEmail: (id: string) => Promise<void>;
   getContactById: (id: string) => Contact | undefined;
   getEmailsForContact: (contactId: string) => Email[];
   generateEmail: (contactId: string, notes: string) => Promise<string>;
-  scheduleEmail: (contactId: string, email: { subject: string; body: string; scheduledDate: string }) => void;
+  scheduleEmail: (contactId: string, email: { subject: string; body: string; scheduledDate: string }) => Promise<void>;
+  refreshData: () => Promise<void>;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -52,178 +55,332 @@ export const useData = () => {
 };
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const { toast } = useToast();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [emails, setEmails] = useState<Email[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Load stored data on user change
-  useEffect(() => {
-    if (user) {
-      const storedContacts = localStorage.getItem(`contacts-${user.id}`);
-      const storedEmails = localStorage.getItem(`emails-${user.id}`);
-      
-      if (storedContacts) {
-        setContacts(JSON.parse(storedContacts));
-      } else {
-        // Initialize with sample data for demo
-        const sampleContacts: Contact[] = [
-          {
-            id: "contact-1",
-            name: "John Doe",
-            email: "john.doe@example.com",
-            phone: "123-456-7890",
-            company: "Acme Corp",
-            website: "acmecorp.com",
-            position: "Marketing Director",
-            notes: "Met at TechConf 2023. Interested in our design services.",
-            createdAt: new Date().toISOString(),
-            tags: ["tech", "marketing"]
-          },
-          {
-            id: "contact-2",
-            name: "Jane Smith",
-            email: "jane.smith@example.com",
-            phone: "987-654-3210",
-            company: "Globex Inc",
-            website: "globex.com",
-            position: "CEO",
-            notes: "Introduced by Michael at Startup Weekend. Looking for partnerships.",
-            createdAt: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
-            tags: ["startup", "potential client"]
-          }
-        ];
-        setContacts(sampleContacts);
-        localStorage.setItem(`contacts-${user.id}`, JSON.stringify(sampleContacts));
-      }
-      
-      if (storedEmails) {
-        setEmails(JSON.parse(storedEmails));
-      } else {
-        // Initialize with sample data for demo
-        const sampleEmails: Email[] = [
-          {
-            id: "email-1",
-            contactId: "contact-1",
-            subject: "Great meeting you at TechConf",
-            body: "Hi John,\n\nIt was a pleasure meeting you at TechConf yesterday. I'm excited about the possibility of helping Acme Corp with your design needs.\n\nWould you be available for a quick call next week to discuss potential collaboration?\n\nBest regards,\n" + user.name,
-            status: "sent",
-            scheduledDate: new Date(Date.now() - 43200000).toISOString(), // 12 hours ago
-            createdAt: new Date(Date.now() - 86400000).toISOString() // 1 day ago
-          },
-          {
-            id: "email-2",
-            contactId: "contact-2",
-            subject: "Following up on our conversation",
-            body: "Hi Jane,\n\nI hope this email finds you well. I wanted to follow up on our conversation at Startup Weekend.\n\nI'd love to explore how we might be able to collaborate with Globex Inc. Are you available for a meeting next Tuesday?\n\nBest regards,\n" + user.name,
-            status: "scheduled",
-            scheduledDate: new Date(Date.now() + 86400000).toISOString(), // 1 day in future
-            createdAt: new Date().toISOString()
-          }
-        ];
-        setEmails(sampleEmails);
-        localStorage.setItem(`emails-${user.id}`, JSON.stringify(sampleEmails));
-      }
-    } else {
-      // Clear data when user logs out
+  // Function to fetch all data
+  const fetchData = async () => {
+    if (!isAuthenticated) {
       setContacts([]);
       setEmails([]);
+      setLoading(false);
+      return;
     }
-  }, [user]);
 
-  // Save data when it changes
+    setLoading(true);
+    try {
+      // Fetch contacts
+      const { data: contactsData, error: contactsError } = await supabase
+        .from('contacts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (contactsError) throw contactsError;
+      
+      // Fetch emails
+      const { data: emailsData, error: emailsError } = await supabase
+        .from('follow_up_emails')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (emailsError) throw emailsError;
+
+      // Transform data to match the expected format
+      const formattedContacts: Contact[] = contactsData.map(contact => ({
+        id: contact.id,
+        name: contact.full_name || '',
+        email: contact.email || '',
+        phone: contact.phone || '',
+        company: contact.company || '',
+        website: contact.website || '',
+        position: contact.position || '',
+        notes: '',  // Notes will be fetched separately
+        createdAt: contact.created_at,
+        tags: []
+      }));
+
+      const formattedEmails: Email[] = emailsData.map(email => ({
+        id: email.id,
+        contactId: email.contact_id,
+        subject: email.subject,
+        body: email.content,
+        status: email.status as "draft" | "scheduled" | "sent" | "failed",
+        scheduledDate: email.scheduled_for,
+        createdAt: email.created_at
+      }));
+
+      // Update state
+      setContacts(formattedContacts);
+      setEmails(formattedEmails);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      toast({
+        variant: "destructive",
+        title: "Failed to load data",
+        description: "There was an error loading your data. Please try again."
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load data when auth state changes
   useEffect(() => {
-    if (user) {
-      localStorage.setItem(`contacts-${user.id}`, JSON.stringify(contacts));
-      localStorage.setItem(`emails-${user.id}`, JSON.stringify(emails));
+    fetchData();
+  }, [isAuthenticated]);
+
+  // Add contact
+  const addContact = async (contact: Omit<Contact, "id" | "createdAt">): Promise<string | undefined> => {
+    try {
+      const { data, error } = await supabase
+        .from('contacts')
+        .insert({
+          full_name: contact.name,
+          email: contact.email,
+          phone: contact.phone,
+          company: contact.company,
+          website: contact.website,
+          position: contact.position,
+          user_id: user?.id
+        })
+        .select();
+
+      if (error) throw error;
+      
+      if (data && data[0]) {
+        const newContact: Contact = {
+          id: data[0].id,
+          name: data[0].full_name || '',
+          email: data[0].email || '',
+          phone: data[0].phone || '',
+          company: data[0].company || '',
+          website: data[0].website || '',
+          position: data[0].position || '',
+          notes: '',
+          createdAt: data[0].created_at,
+          tags: []
+        };
+
+        setContacts(prev => [newContact, ...prev]);
+
+        toast({
+          title: "Contact added",
+          description: `${contact.name} has been added to your contacts.`
+        });
+        
+        return data[0].id;
+      }
+    } catch (error: any) {
+      console.error("Error adding contact:", error);
+      toast({
+        variant: "destructive",
+        title: "Failed to add contact",
+        description: error.message
+      });
     }
-  }, [contacts, emails, user]);
-
-  const addContact = (contact: Omit<Contact, "id" | "createdAt">) => {
-    const newContact: Contact = {
-      ...contact,
-      id: "contact-" + Math.random().toString(36).substr(2, 9),
-      createdAt: new Date().toISOString()
-    };
-    setContacts([...contacts, newContact]);
-    toast({
-      title: "Contact added",
-      description: `${contact.name} has been added to your contacts.`
-    });
+    return undefined;
   };
 
-  const updateContact = (id: string, contactUpdates: Partial<Omit<Contact, "id" | "createdAt">>) => {
-    setContacts(contacts.map(contact => 
-      contact.id === id ? { ...contact, ...contactUpdates } : contact
-    ));
-    toast({
-      title: "Contact updated",
-      description: "Contact information has been updated."
-    });
+  // Update contact
+  const updateContact = async (id: string, contactUpdates: Partial<Omit<Contact, "id" | "createdAt">>) => {
+    try {
+      const updates: any = {};
+      if (contactUpdates.name) updates.full_name = contactUpdates.name;
+      if (contactUpdates.email !== undefined) updates.email = contactUpdates.email;
+      if (contactUpdates.phone !== undefined) updates.phone = contactUpdates.phone;
+      if (contactUpdates.company !== undefined) updates.company = contactUpdates.company;
+      if (contactUpdates.website !== undefined) updates.website = contactUpdates.website;
+      if (contactUpdates.position !== undefined) updates.position = contactUpdates.position;
+      
+      const { error } = await supabase
+        .from('contacts')
+        .update(updates)
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Update the contact in state
+      setContacts(contacts.map(contact => 
+        contact.id === id ? { ...contact, ...contactUpdates } : contact
+      ));
+
+      toast({
+        title: "Contact updated",
+        description: "Contact information has been updated."
+      });
+    } catch (error: any) {
+      console.error("Error updating contact:", error);
+      toast({
+        variant: "destructive",
+        title: "Failed to update contact",
+        description: error.message
+      });
+    }
   };
 
-  const deleteContact = (id: string) => {
-    setContacts(contacts.filter(contact => contact.id !== id));
-    // Also delete related emails
-    setEmails(emails.filter(email => email.contactId !== id));
-    toast({
-      title: "Contact deleted",
-      description: "Contact and associated emails have been removed."
-    });
+  // Delete contact
+  const deleteContact = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('contacts')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Remove from state
+      setContacts(contacts.filter(contact => contact.id !== id));
+      setEmails(emails.filter(email => email.contactId !== id));
+
+      toast({
+        title: "Contact deleted",
+        description: "Contact and associated emails have been removed."
+      });
+    } catch (error: any) {
+      console.error("Error deleting contact:", error);
+      toast({
+        variant: "destructive",
+        title: "Failed to delete contact",
+        description: error.message
+      });
+    }
   };
 
-  const addEmail = (email: Omit<Email, "id" | "createdAt">) => {
-    const newEmail: Email = {
-      ...email,
-      id: "email-" + Math.random().toString(36).substr(2, 9),
-      createdAt: new Date().toISOString()
-    };
-    setEmails([...emails, newEmail]);
-    toast({
-      title: "Email created",
-      description: email.status === "scheduled" 
-        ? `Email scheduled to be sent on ${new Date(email.scheduledDate).toLocaleDateString()}.`
-        : "Email has been created."
-    });
+  // Add email
+  const addEmail = async (email: Omit<Email, "id" | "createdAt">): Promise<string | undefined> => {
+    try {
+      const { data, error } = await supabase
+        .from('follow_up_emails')
+        .insert({
+          contact_id: email.contactId,
+          subject: email.subject,
+          content: email.body,
+          status: email.status,
+          scheduled_for: email.scheduledDate
+        })
+        .select();
+
+      if (error) throw error;
+      
+      if (data && data[0]) {
+        const newEmail: Email = {
+          id: data[0].id,
+          contactId: data[0].contact_id,
+          subject: data[0].subject,
+          body: data[0].content,
+          status: data[0].status,
+          scheduledDate: data[0].scheduled_for,
+          createdAt: data[0].created_at
+        };
+
+        setEmails(prev => [newEmail, ...prev]);
+
+        toast({
+          title: "Email created",
+          description: email.status === "scheduled" 
+            ? `Email scheduled to be sent on ${new Date(email.scheduledDate).toLocaleDateString()}.`
+            : "Email has been created."
+        });
+        
+        return data[0].id;
+      }
+    } catch (error: any) {
+      console.error("Error adding email:", error);
+      toast({
+        variant: "destructive",
+        title: "Failed to create email",
+        description: error.message
+      });
+    }
+    return undefined;
   };
 
-  const updateEmail = (id: string, emailUpdates: Partial<Omit<Email, "id" | "createdAt">>) => {
-    setEmails(emails.map(email => 
-      email.id === id ? { ...email, ...emailUpdates } : email
-    ));
-    toast({
-      title: "Email updated",
-      description: "Email has been updated."
-    });
+  // Update email
+  const updateEmail = async (id: string, emailUpdates: Partial<Omit<Email, "id" | "createdAt">>) => {
+    try {
+      const updates: any = {};
+      if (emailUpdates.subject !== undefined) updates.subject = emailUpdates.subject;
+      if (emailUpdates.body !== undefined) updates.content = emailUpdates.body;
+      if (emailUpdates.status !== undefined) updates.status = emailUpdates.status;
+      if (emailUpdates.scheduledDate !== undefined) updates.scheduled_for = emailUpdates.scheduledDate;
+      
+      const { error } = await supabase
+        .from('follow_up_emails')
+        .update(updates)
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Update the email in state
+      setEmails(emails.map(email => 
+        email.id === id ? { ...email, ...emailUpdates } : email
+      ));
+
+      toast({
+        title: "Email updated",
+        description: "Email has been updated."
+      });
+    } catch (error: any) {
+      console.error("Error updating email:", error);
+      toast({
+        variant: "destructive",
+        title: "Failed to update email",
+        description: error.message
+      });
+    }
   };
 
-  const deleteEmail = (id: string) => {
-    setEmails(emails.filter(email => email.id !== id));
-    toast({
-      title: "Email deleted",
-      description: "Email has been removed."
-    });
+  // Delete email
+  const deleteEmail = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('follow_up_emails')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Remove from state
+      setEmails(emails.filter(email => email.id !== id));
+
+      toast({
+        title: "Email deleted",
+        description: "Email has been removed."
+      });
+    } catch (error: any) {
+      console.error("Error deleting email:", error);
+      toast({
+        variant: "destructive",
+        title: "Failed to delete email",
+        description: error.message
+      });
+    }
   };
 
+  // Get contact by ID
   const getContactById = (id: string) => {
     return contacts.find(contact => contact.id === id);
   };
 
+  // Get emails for contact
   const getEmailsForContact = (contactId: string) => {
     return emails.filter(email => email.contactId === contactId);
   };
 
   // Simulate GPT integration for email generation
+  // Note: We'll replace this with a real GPT-4 integration later
   const generateEmail = async (contactId: string, notes: string): Promise<string> => {
     const contact = getContactById(contactId);
     if (!contact) {
       throw new Error("Contact not found");
     }
     
-    // Simulate API delay
+    // This will be replaced with a real GPT API call
     await new Promise(resolve => setTimeout(resolve, 1500));
     
-    // Generate a basic email template based on contact info and notes
     const email = `Hi ${contact.name},
 
 I hope this email finds you well. It was a pleasure meeting you recently.
@@ -235,12 +392,13 @@ I'd love to connect further and explore potential synergies between our work. Wo
 Looking forward to hearing from you.
 
 Best regards,
-${user?.name || "User"}`;
+${user?.user_metadata?.full_name || "User"}`;
 
     return email;
   };
 
-  const scheduleEmail = (contactId: string, emailData: { subject: string; body: string; scheduledDate: string }) => {
+  // Schedule an email
+  const scheduleEmail = async (contactId: string, emailData: { subject: string; body: string; scheduledDate: string }) => {
     const newEmail: Omit<Email, "id" | "createdAt"> = {
       contactId,
       subject: emailData.subject,
@@ -249,7 +407,12 @@ ${user?.name || "User"}`;
       scheduledDate: emailData.scheduledDate
     };
     
-    addEmail(newEmail);
+    await addEmail(newEmail);
+  };
+
+  // Function to refresh data
+  const refreshData = async () => {
+    await fetchData();
   };
 
   return (
@@ -257,6 +420,7 @@ ${user?.name || "User"}`;
       value={{
         contacts,
         emails,
+        loading,
         addContact,
         updateContact,
         deleteContact,
@@ -266,7 +430,8 @@ ${user?.name || "User"}`;
         getContactById,
         getEmailsForContact,
         generateEmail,
-        scheduleEmail
+        scheduleEmail,
+        refreshData
       }}
     >
       {children}

@@ -1,18 +1,16 @@
 
 import React, { createContext, useContext, useEffect, useState } from "react";
-
-interface User {
-  id: string;
-  name: string;
-  email: string;
-}
+import { supabase } from "@/integrations/supabase/client";
+import { Session, User } from "@supabase/supabase-js";
+import { useToast } from "@/hooks/use-toast";
 
 interface AuthContextType {
   user: User | null;
+  session: Session | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   isAuthenticated: boolean;
 }
 
@@ -28,72 +26,108 @@ export const useAuth = () => {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
 
   useEffect(() => {
-    // Check if there's a user in local storage on initial load
-    const storedUser = localStorage.getItem("user");
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-    setLoading(false);
+    // Set up auth state listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, currentSession) => {
+        console.log("Auth state changed:", event);
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
+      }
+    );
+
+    // Check for existing session
+    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      setSession(currentSession);
+      setUser(currentSession?.user ?? null);
+      setLoading(false);
+    });
+
+    // Cleanup
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (email: string, password: string) => {
-    // In a real app, you would make an API call to verify credentials
-    // For now, we'll simulate a successful login with mock data
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Simple validation
-    if (!email.includes('@') || password.length < 6) {
-      throw new Error("Invalid credentials");
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      
+      if (error) {
+        throw new Error(error.message);
+      }
+      
+      // Session will be automatically handled by the onAuthStateChange listener
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Login failed",
+        description: error.message
+      });
+      throw error;
     }
-
-    const user = {
-      id: "user-" + Math.random().toString(36).substr(2, 9),
-      name: email.split('@')[0],
-      email
-    };
-    
-    // Store in local storage
-    localStorage.setItem("user", JSON.stringify(user));
-    setUser(user);
   };
 
   const register = async (name: string, email: string, password: string) => {
-    // In a real app, you would make an API call to register the user
-    // For now, we'll simulate a successful registration with mock data
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Simple validation
-    if (!email.includes('@') || password.length < 6) {
-      throw new Error("Invalid credentials");
-    }
+    try {
+      const { error } = await supabase.auth.signUp({ 
+        email, 
+        password,
+        options: {
+          data: {
+            full_name: name
+          }
+        }
+      });
+      
+      if (error) {
+        throw new Error(error.message);
+      }
 
-    const user = {
-      id: "user-" + Math.random().toString(36).substr(2, 9),
-      name,
-      email
-    };
-    
-    // Store in local storage
-    localStorage.setItem("user", JSON.stringify(user));
-    setUser(user);
+      // Create profile entry
+      if (user) {
+        const { error: profileError } = await supabase
+          .from('users')
+          .insert({
+            id: user.id,
+            email,
+            full_name: name
+          });
+          
+        if (profileError) {
+          console.error("Error creating user profile:", profileError);
+        }
+      }
+      
+      // Session will be automatically handled by the onAuthStateChange listener
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Registration failed",
+        description: error.message
+      });
+      throw error;
+    }
   };
 
-  const logout = () => {
-    localStorage.removeItem("user");
-    setUser(null);
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+      // Session will be automatically cleared by the onAuthStateChange listener
+    } catch (error: any) {
+      console.error("Logout failed:", error.message);
+    }
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
+        session,
         loading,
         login,
         register,
