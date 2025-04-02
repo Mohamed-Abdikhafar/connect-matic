@@ -7,6 +7,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 
 interface RequestBody {
   imageUrl: string;
+  userId: string;
 }
 
 Deno.serve(async (req) => {
@@ -30,7 +31,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
     const requestData = await req.json();
-    const { imageUrl, userId } = requestData as RequestBody & { userId: string };
+    const { imageUrl, userId } = requestData;
     
     if (!imageUrl) {
       throw new Error('Missing image URL');
@@ -40,14 +41,23 @@ Deno.serve(async (req) => {
       throw new Error('Missing user ID');
     }
 
+    console.log("Processing image URL:", imageUrl);
+    
     // Get the image from Supabase Storage
+    const imagePath = imageUrl.replace(`${supabaseUrl}/storage/v1/object/public/business_cards/`, '');
+    console.log("Image path:", imagePath);
+
     const { data: imageData, error: imageError } = await supabase
       .storage
       .from('business_cards')
-      .download(imageUrl.replace(`${supabaseUrl}/storage/v1/object/public/business_cards/`, ''));
+      .download(imagePath);
 
     if (imageError) {
       throw new Error(`Failed to fetch image: ${imageError.message}`);
+    }
+    
+    if (!imageData) {
+      throw new Error('No image data received from storage');
     }
     
     // Convert image to base64
@@ -69,7 +79,7 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: "You are an expert at extracting contact information from business cards. Extract the following fields if present: full name, email, phone, company, position, website. Return the data as a JSON object with these fields. Do not include any other text in your response."
+            content: "You are an expert at extracting contact information from business cards. Extract the following fields if present: full_name, email, phone, company, position, website. Return the data as a JSON object with these fields. Do not include any other text in your response."
           },
           {
             role: "user",
@@ -92,13 +102,22 @@ Deno.serve(async (req) => {
     });
 
     const result = await response.json();
+    
+    // Check if we have a valid response with choices
+    if (!result.choices || !result.choices[0] || !result.choices[0].message) {
+      console.error("Unexpected API response format:", JSON.stringify(result));
+      throw new Error('Invalid response from OpenAI API');
+    }
+    
     const extraction = result.choices[0].message.content;
+    console.log("Extracted content:", extraction);
     
     // Parse the JSON response
     let contactData;
     try {
       contactData = JSON.parse(extraction);
     } catch (error) {
+      console.log("Failed to parse JSON, using regex extraction instead");
       // If parsing fails, extract using regex
       const nameMatch = extraction.match(/["']?full_?name["']?\s*:\s*["']([^"']+)["']/i);
       const emailMatch = extraction.match(/["']?email["']?\s*:\s*["']([^"']+)["']/i);
@@ -124,6 +143,8 @@ Deno.serve(async (req) => {
       card_image_url: imageUrl
     };
 
+    console.log("Saving contact data:", contactWithUserId);
+
     // Save to database
     const { data, error } = await supabase
       .from('contacts')
@@ -131,6 +152,7 @@ Deno.serve(async (req) => {
       .select();
 
     if (error) {
+      console.error("Database insertion error:", error);
       throw error;
     }
 
@@ -147,7 +169,7 @@ Deno.serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error(error);
+    console.error("Function error:", error);
     return new Response(
       JSON.stringify({ 
         success: false, 
