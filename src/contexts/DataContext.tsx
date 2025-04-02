@@ -252,13 +252,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Add email
   const addEmail = async (email: Omit<Email, "id" | "createdAt">): Promise<string | undefined> => {
     try {
+      // Make sure status is one of the allowed values
+      const emailStatus: "draft" | "scheduled" | "sent" | "failed" = 
+        (email.status === "draft" || email.status === "scheduled" || 
+         email.status === "sent" || email.status === "failed") 
+          ? email.status 
+          : "draft";
+
       const { data, error } = await supabase
         .from('follow_up_emails')
         .insert({
           contact_id: email.contactId,
           subject: email.subject,
           content: email.body,
-          status: email.status,
+          status: emailStatus,
           scheduled_for: email.scheduledDate
         })
         .select();
@@ -271,7 +278,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           contactId: data[0].contact_id,
           subject: data[0].subject,
           body: data[0].content,
-          status: data[0].status,
+          status: data[0].status as "draft" | "scheduled" | "sent" | "failed",
           scheduledDate: data[0].scheduled_for,
           createdAt: data[0].created_at
         };

@@ -52,6 +52,10 @@ const Sidebar: React.FC = () => {
     });
   };
 
+  // Get user's name from metadata if available
+  const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || "User";
+  const userEmail = user?.email || "user@example.com";
+
   return (
     <div className="h-screen w-64 bg-white border-r border-gray-200 flex flex-col">
       <div className="p-6">
@@ -106,8 +110,8 @@ const Sidebar: React.FC = () => {
       <div className="p-4 border-t border-gray-200">
         <div className="flex items-center justify-between mb-4">
           <div className="flex-1">
-            <p className="font-medium">{user?.name || "User"}</p>
-            <p className="text-sm text-gray-500 truncate">{user?.email || "user@example.com"}</p>
+            <p className="font-medium">{userName}</p>
+            <p className="text-sm text-gray-500 truncate">{userEmail}</p>
           </div>
         </div>
         <Button 

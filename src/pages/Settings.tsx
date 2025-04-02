@@ -18,8 +18,13 @@ import { useToast } from "@/hooks/use-toast";
 const Settings = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [name, setName] = useState(user?.name || "");
-  const [email, setEmail] = useState(user?.email || "");
+  
+  // Get user data from metadata
+  const initialName = user?.user_metadata?.full_name || "";
+  const initialEmail = user?.email || "";
+  
+  const [name, setName] = useState(initialName);
+  const [email, setEmail] = useState(initialEmail);
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [pushNotifications, setPushNotifications] = useState(true);
   const [reminderDays, setReminderDays] = useState(7);

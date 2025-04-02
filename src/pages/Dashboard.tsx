@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React from "react";
 import { useData, Contact, Email } from "@/contexts/DataContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +12,9 @@ const Dashboard = () => {
   const { contacts, emails } = useData();
   const { user } = useAuth();
   const { toast } = useToast();
+
+  // Get user's name from metadata if available
+  const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || "User";
 
   // Get statistics
   const totalContacts = contacts.length;
@@ -52,7 +55,7 @@ const Dashboard = () => {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            Welcome back, {user?.name}! Here's what's happening with your networking.
+            Welcome back, {userName}! Here's what's happening with your networking.
           </p>
         </div>
         <div className="flex gap-2">
