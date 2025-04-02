@@ -1,131 +1,152 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.33.1";
-import { corsHeaders } from "../_shared/cors.ts";
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
+// This function is meant to be triggered as a scheduled task or cron job
 Deno.serve(async (req) => {
-  // Handle CORS
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
-  
   try {
-    const apiKey = Deno.env.get('SMTP_API_KEY');
-    if (!apiKey) {
-      throw new Error('Missing SMTP API key');
-    }
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error('Missing Supabase configuration');
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    
-    // Get emails that are scheduled to be sent but are past their scheduled date
-    const now = new Date().toISOString();
-    const { data: emails, error: emailsError } = await supabase
-      .from('follow_up_emails')
-      .select(`
-        id, 
-        subject, 
-        content, 
-        scheduled_for, 
-        contacts (
-          id, 
-          full_name, 
-          email, 
-          user_id
-        )
-      `)
-      .eq('status', 'scheduled')
-      .lt('scheduled_for', now);
-
-    if (emailsError) {
-      throw new Error(`Failed to fetch scheduled emails: ${emailsError.message}`);
-    }
-
-    if (!emails || emails.length === 0) {
+    // Only allow POST requests for this task
+    if (req.method !== "POST") {
       return new Response(
-        JSON.stringify({ 
-          success: true, 
-          message: "No emails to send",
-          sent: 0
-        }),
-        { 
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          status: 200 
-        }
+        JSON.stringify({ message: "Only POST requests are allowed" }),
+        { status: 405, headers: { "Content-Type": "application/json" } }
       );
     }
-
-    // Process each email
-    const results = [];
-    for (const email of emails) {
-      // Get the sender information
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('full_name, email')
-        .eq('id', email.contacts.user_id)
-        .single();
-
-      if (userError) {
-        console.error(`Failed to fetch user data for email ${email.id}: ${userError.message}`);
-        results.push({
-          id: email.id,
-          status: 'failed',
-          error: `Failed to fetch user data: ${userError.message}`
-        });
-        continue;
-      }
-
-      // Here, you would integrate with your email sending service (SendGrid, Mailgun, etc.)
-      // For now, we'll simulate success/failure
-      const success = Math.random() > 0.1; // 90% chance of success for the simulation
-      
-      // Update the email status in the database
-      const { error: updateError } = await supabase
-        .from('follow_up_emails')
-        .update({ 
-          status: success ? 'sent' : 'failed',
-          sent_at: success ? new Date().toISOString() : null
-        })
-        .eq('id', email.id);
-
-      if (updateError) {
-        console.error(`Failed to update email status for email ${email.id}: ${updateError.message}`);
-      }
-
-      results.push({
-        id: email.id,
-        status: success ? 'sent' : 'failed',
-        recipient: email.contacts.email,
-        sender: userData.email
-      });
+    
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      throw new Error("Missing Supabase credentials");
     }
 
+    // Get SMTP credentials from environment variables
+    const host = Deno.env.get('SMTP_HOST');
+    const port = parseInt(Deno.env.get('SMTP_PORT') || "587");
+    const secure = Deno.env.get('SMTP_SECURE') === 'true';
+    const user = Deno.env.get('SMTP_USER');
+    const password = Deno.env.get('SMTP_PASSWORD');
+    const from = Deno.env.get('SMTP_FROM');
+    
+    if (!host || !user || !password || !from) {
+      throw new Error('Missing SMTP configuration');
+    }
+    
+    // Initialize SMTP client
+    const client = new SMTPClient({
+      connection: {
+        hostname: host,
+        port: port,
+        tls: secure,
+        auth: {
+          username: user,
+          password: password,
+        },
+      },
+    });
+    
+    // Initialize Supabase client with admin privileges
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    
+    // Get the current time
+    const now = new Date();
+    
+    // Find emails that are scheduled to be sent now or earlier
+    const { data: scheduledEmails, error: emailError } = await supabase
+      .from("follow_up_emails")
+      .select("*, contacts(full_name, email)")
+      .eq("status", "scheduled")
+      .lte("scheduled_for", now.toISOString());
+    
+    if (emailError) {
+      throw new Error(`Failed to fetch scheduled emails: ${emailError.message}`);
+    }
+    
+    console.log(`Found ${scheduledEmails?.length || 0} emails to send`);
+    
+    // Process each email
+    const results = [];
+    
+    if (scheduledEmails && scheduledEmails.length > 0) {
+      for (const email of scheduledEmails) {
+        try {
+          // Skip if contact doesn't have an email address
+          if (!email.contacts?.email) {
+            console.warn(`Contact ${email.contact_id} has no email address`);
+            
+            // Mark as failed
+            await supabase
+              .from("follow_up_emails")
+              .update({ status: "failed", sent_at: now.toISOString() })
+              .eq("id", email.id);
+              
+            results.push({
+              id: email.id,
+              status: "failed",
+              reason: "Missing recipient email address"
+            });
+            
+            continue;
+          }
+          
+          // Send email
+          await client.send({
+            from: from,
+            to: email.contacts.email,
+            subject: email.subject,
+            content: email.content,
+            html: email.content
+          });
+          
+          // Update the email status
+          await supabase
+            .from("follow_up_emails")
+            .update({ status: "sent", sent_at: now.toISOString() })
+            .eq("id", email.id);
+            
+          results.push({
+            id: email.id,
+            status: "sent",
+            contact: email.contacts.full_name,
+            email: email.contacts.email
+          });
+          
+          console.log(`Email sent to ${email.contacts.email}`);
+        } catch (error) {
+          console.error(`Failed to send email ${email.id}:`, error);
+          
+          // Mark as failed
+          await supabase
+            .from("follow_up_emails")
+            .update({ status: "failed" })
+            .eq("id", email.id);
+            
+          results.push({
+            id: email.id,
+            status: "failed",
+            error: error.message
+          });
+        }
+      }
+    }
+    
+    // Close SMTP connection
+    await client.close();
+    
     return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: `Processed ${emails.length} email(s)`,
+      JSON.stringify({
+        success: true,
+        processed: results.length,
         results
       }),
-      { 
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200 
-      }
+      { status: 200, headers: { "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error(error);
+    console.error("Error sending scheduled emails:", error);
+    
     return new Response(
-      JSON.stringify({ 
-        success: false, 
-        message: error.message 
-      }),
-      { 
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 400 
-      }
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
 });

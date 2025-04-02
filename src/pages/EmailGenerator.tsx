@@ -14,14 +14,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Loader2, SparklesIcon, CalendarIcon, RefreshCw } from "lucide-react";
+import { 
+  ArrowLeft, 
+  Loader2, 
+  SparklesIcon, 
+  CalendarIcon, 
+  RefreshCw,
+  Send
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Switch } from "@/components/ui/switch";
 
 const EmailGenerator = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { getContactById, generateEmail, scheduleEmail } = useData();
+  const { getContactById, generateEmail, scheduleEmail, sendEmail } = useData();
   
   const [subject, setSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
@@ -29,6 +37,7 @@ const EmailGenerator = () => {
   const [scheduledDate, setScheduledDate] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [sendImmediately, setSendImmediately] = useState(false);
   
   useEffect(() => {
     if (!id) {
@@ -97,7 +106,7 @@ const EmailGenerator = () => {
     }
   };
   
-  const handleScheduleEmail = () => {
+  const handleSendOrScheduleEmail = async () => {
     if (subject.trim() === "") {
       toast({
         variant: "destructive",
@@ -116,7 +125,7 @@ const EmailGenerator = () => {
       return;
     }
     
-    if (!scheduledDate) {
+    if (!sendImmediately && !scheduledDate) {
       toast({
         variant: "destructive",
         title: "Schedule date required",
@@ -128,23 +137,38 @@ const EmailGenerator = () => {
     setIsSending(true);
     
     try {
-      scheduleEmail(id, {
-        subject,
-        body: emailBody,
-        scheduledDate: new Date(scheduledDate).toISOString()
-      });
-      
-      toast({
-        title: "Email scheduled",
-        description: `Your follow-up email to ${contact.name} has been scheduled for ${new Date(scheduledDate).toLocaleDateString()}.`
-      });
+      if (sendImmediately) {
+        // Send the email immediately
+        await sendEmail(id, {
+          to: contact.email,
+          subject,
+          body: emailBody
+        });
+        
+        toast({
+          title: "Email sent",
+          description: `Your follow-up email to ${contact.name} has been sent.`
+        });
+      } else {
+        // Schedule the email
+        await scheduleEmail(id, {
+          subject,
+          body: emailBody,
+          scheduledDate: new Date(scheduledDate).toISOString()
+        });
+        
+        toast({
+          title: "Email scheduled",
+          description: `Your follow-up email to ${contact.name} has been scheduled for ${new Date(scheduledDate).toLocaleDateString()}.`
+        });
+      }
       
       navigate(`/contacts/${id}`);
     } catch (error) {
       toast({
         variant: "destructive",
-        title: "Scheduling failed",
-        description: "Failed to schedule email. Please try again."
+        title: sendImmediately ? "Sending failed" : "Scheduling failed",
+        description: `Failed to ${sendImmediately ? "send" : "schedule"} email. Please try again.`
       });
     } finally {
       setIsSending(false);
@@ -166,7 +190,7 @@ const EmailGenerator = () => {
         <CardHeader>
           <CardTitle>Create Follow-up Email</CardTitle>
           <CardDescription>
-            Generate and schedule a personalized follow-up email to {contact.name}
+            Generate and {sendImmediately ? "send" : "schedule"} a personalized follow-up email to {contact.name}
           </CardDescription>
         </CardHeader>
         
@@ -240,19 +264,39 @@ const EmailGenerator = () => {
             />
           </div>
           
-          {/* Schedule Date */}
-          <div className="space-y-2">
-            <Label htmlFor="scheduledDate" className="flex items-center gap-2">
-              <CalendarIcon className="h-4 w-4" />
-              Schedule Date
-            </Label>
-            <Input 
-              id="scheduledDate" 
-              type="date" 
-              value={scheduledDate} 
-              onChange={(e) => setScheduledDate(e.target.value)}
+          {/* Send Immediately Toggle */}
+          <div className="flex items-center justify-between space-y-0">
+            <div className="flex flex-col">
+              <Label htmlFor="sendImmediately" className="mb-1">Send Immediately</Label>
+              <p className="text-sm text-muted-foreground">
+                {sendImmediately 
+                  ? "Email will be sent right away" 
+                  : "Email will be scheduled for later"
+                }
+              </p>
+            </div>
+            <Switch
+              id="sendImmediately"
+              checked={sendImmediately}
+              onCheckedChange={setSendImmediately}
             />
           </div>
+          
+          {/* Schedule Date - only show if not sending immediately */}
+          {!sendImmediately && (
+            <div className="space-y-2">
+              <Label htmlFor="scheduledDate" className="flex items-center gap-2">
+                <CalendarIcon className="h-4 w-4" />
+                Schedule Date
+              </Label>
+              <Input 
+                id="scheduledDate" 
+                type="date" 
+                value={scheduledDate} 
+                onChange={(e) => setScheduledDate(e.target.value)}
+              />
+            </div>
+          )}
         </CardContent>
         
         <CardFooter className="flex justify-between">
@@ -265,10 +309,21 @@ const EmailGenerator = () => {
           </Button>
           <Button 
             type="button" 
-            onClick={handleScheduleEmail}
-            disabled={isSending || !subject || !emailBody || !scheduledDate}
+            onClick={handleSendOrScheduleEmail}
+            disabled={isSending || !subject || !emailBody || (!sendImmediately && !scheduledDate)}
+            className="flex items-center gap-2"
           >
-            {isSending ? "Scheduling..." : "Schedule Email"}
+            {isSending ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {sendImmediately ? "Sending..." : "Scheduling..."}
+              </>
+            ) : (
+              <>
+                {sendImmediately ? <Send className="h-4 w-4" /> : <CalendarIcon className="h-4 w-4" />}
+                {sendImmediately ? "Send Now" : "Schedule Email"}
+              </>
+            )}
           </Button>
         </CardFooter>
       </Card>

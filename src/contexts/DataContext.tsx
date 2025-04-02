@@ -1,8 +1,8 @@
-
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useAuth } from "./AuthContext";
 import { useToast } from "../hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { useSupabaseFunction } from "@/hooks/useSupabaseFunction";
 
 export interface Contact {
   id: string;
@@ -40,6 +40,7 @@ interface DataContextType {
   getContactById: (id: string) => Contact | undefined;
   getEmailsForContact: (contactId: string) => Email[];
   generateEmail: (contactId: string, notes: string) => Promise<string>;
+  sendEmail: (contactId: string, email: { to: string; subject: string; body: string }) => Promise<boolean>;
   scheduleEmail: (contactId: string, email: { subject: string; body: string; scheduledDate: string }) => Promise<void>;
   refreshData: () => Promise<void>;
 }
@@ -60,8 +61,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [emails, setEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  const generateEmailFunction = useSupabaseFunction<{success: boolean; email: string}>('generate-email');
+  const sendEmailFunction = useSupabaseFunction<{success: boolean; message: string}>('send-email');
 
-  // Function to fetch all data
   const fetchData = async () => {
     if (!isAuthenticated) {
       setContacts([]);
@@ -72,7 +75,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setLoading(true);
     try {
-      // Fetch contacts
       const { data: contactsData, error: contactsError } = await supabase
         .from('contacts')
         .select('*')
@@ -80,7 +82,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (contactsError) throw contactsError;
       
-      // Fetch emails
       const { data: emailsData, error: emailsError } = await supabase
         .from('follow_up_emails')
         .select('*')
@@ -88,7 +89,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (emailsError) throw emailsError;
 
-      // Transform data to match the expected format
       const formattedContacts: Contact[] = contactsData.map(contact => ({
         id: contact.id,
         name: contact.full_name || '',
@@ -97,7 +97,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         company: contact.company || '',
         website: contact.website || '',
         position: contact.position || '',
-        notes: '',  // Notes will be fetched separately
+        notes: '',
         createdAt: contact.created_at,
         tags: []
       }));
@@ -112,7 +112,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: email.created_at
       }));
 
-      // Update state
       setContacts(formattedContacts);
       setEmails(formattedEmails);
     } catch (error) {
@@ -127,12 +126,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Load data when auth state changes
   useEffect(() => {
     fetchData();
   }, [isAuthenticated]);
 
-  // Add contact
   const addContact = async (contact: Omit<Contact, "id" | "createdAt">): Promise<string | undefined> => {
     try {
       const { data, error } = await supabase
@@ -184,7 +181,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return undefined;
   };
 
-  // Update contact
   const updateContact = async (id: string, contactUpdates: Partial<Omit<Contact, "id" | "createdAt">>) => {
     try {
       const updates: any = {};
@@ -202,7 +198,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) throw error;
 
-      // Update the contact in state
       setContacts(contacts.map(contact => 
         contact.id === id ? { ...contact, ...contactUpdates } : contact
       ));
@@ -221,7 +216,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Delete contact
   const deleteContact = async (id: string) => {
     try {
       const { error } = await supabase
@@ -231,7 +225,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) throw error;
 
-      // Remove from state
       setContacts(contacts.filter(contact => contact.id !== id));
       setEmails(emails.filter(email => email.contactId !== id));
 
@@ -249,10 +242,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Add email
   const addEmail = async (email: Omit<Email, "id" | "createdAt">): Promise<string | undefined> => {
     try {
-      // Make sure status is one of the allowed values
       const emailStatus: "draft" | "scheduled" | "sent" | "failed" = 
         (email.status === "draft" || email.status === "scheduled" || 
          email.status === "sent" || email.status === "failed") 
@@ -305,7 +296,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return undefined;
   };
 
-  // Update email
   const updateEmail = async (id: string, emailUpdates: Partial<Omit<Email, "id" | "createdAt">>) => {
     try {
       const updates: any = {};
@@ -321,7 +311,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) throw error;
 
-      // Update the email in state
       setEmails(emails.map(email => 
         email.id === id ? { ...email, ...emailUpdates } : email
       ));
@@ -340,7 +329,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Delete email
   const deleteEmail = async (id: string) => {
     try {
       const { error } = await supabase
@@ -350,7 +338,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) throw error;
 
-      // Remove from state
       setEmails(emails.filter(email => email.id !== id));
 
       toast({
@@ -367,44 +354,80 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Get contact by ID
   const getContactById = (id: string) => {
     return contacts.find(contact => contact.id === id);
   };
 
-  // Get emails for contact
   const getEmailsForContact = (contactId: string) => {
     return emails.filter(email => email.contactId === contactId);
   };
 
-  // Simulate GPT integration for email generation
-  // Note: We'll replace this with a real GPT-4 integration later
   const generateEmail = async (contactId: string, notes: string): Promise<string> => {
     const contact = getContactById(contactId);
     if (!contact) {
       throw new Error("Contact not found");
     }
     
-    // This will be replaced with a real GPT API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    const email = `Hi ${contact.name},
-
-I hope this email finds you well. It was a pleasure meeting you recently.
-
-${notes}
-
-I'd love to connect further and explore potential synergies between our work. Would you be available for a brief call in the coming days?
-
-Looking forward to hearing from you.
-
-Best regards,
-${user?.user_metadata?.full_name || "User"}`;
-
-    return email;
+    try {
+      const response = await generateEmailFunction.execute({
+        contactId,
+        notes
+      });
+      
+      if (response?.success && response.email) {
+        return response.email;
+      } else {
+        throw new Error("Failed to generate email");
+      }
+    } catch (error) {
+      console.error("Error generating email:", error);
+      throw error;
+    }
   };
 
-  // Schedule an email
+  const sendEmail = async (contactId: string, emailData: { to: string; subject: string; body: string }): Promise<boolean> => {
+    const contact = getContactById(contactId);
+    if (!contact) {
+      throw new Error("Contact not found");
+    }
+    
+    try {
+      const response = await sendEmailFunction.execute({
+        to: emailData.to,
+        subject: emailData.subject,
+        body: emailData.body,
+        contactName: contact.name
+      });
+      
+      if (response?.success) {
+        await addEmail({
+          contactId,
+          subject: emailData.subject,
+          body: emailData.body,
+          status: "sent",
+          scheduledDate: new Date().toISOString()
+        });
+        
+        toast({
+          title: "Email sent",
+          description: `Your email to ${contact.name} has been sent.`
+        });
+        
+        return true;
+      } else {
+        throw new Error(response?.message || "Failed to send email");
+      }
+    } catch (error) {
+      console.error("Error sending email:", error);
+      toast({
+        variant: "destructive",
+        title: "Email sending failed",
+        description: error instanceof Error ? error.message : "Failed to send email"
+      });
+      throw error;
+    }
+  };
+
   const scheduleEmail = async (contactId: string, emailData: { subject: string; body: string; scheduledDate: string }) => {
     const newEmail: Omit<Email, "id" | "createdAt"> = {
       contactId,
@@ -417,7 +440,6 @@ ${user?.user_metadata?.full_name || "User"}`;
     await addEmail(newEmail);
   };
 
-  // Function to refresh data
   const refreshData = async () => {
     await fetchData();
   };
@@ -437,6 +459,7 @@ ${user?.user_metadata?.full_name || "User"}`;
         getContactById,
         getEmailsForContact,
         generateEmail,
+        sendEmail,
         scheduleEmail,
         refreshData
       }}
