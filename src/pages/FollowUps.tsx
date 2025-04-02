@@ -111,35 +111,35 @@ const FollowUps = () => {
                 Failed ({emails.filter(e => e.status === "failed").length})
               </TabsTrigger>
             </TabsList>
+            
+            <CardContent className="pt-6">
+              <TabsContent value="all" className="mt-0">
+                <FollowUpList emails={sortedEmails} contacts={contacts} />
+              </TabsContent>
+              
+              <TabsContent value="scheduled" className="mt-0">
+                <FollowUpList 
+                  emails={sortedEmails.filter(e => e.status === "scheduled")} 
+                  contacts={contacts} 
+                />
+              </TabsContent>
+              
+              <TabsContent value="sent" className="mt-0">
+                <FollowUpList 
+                  emails={sortedEmails.filter(e => e.status === "sent")} 
+                  contacts={contacts} 
+                />
+              </TabsContent>
+              
+              <TabsContent value="failed" className="mt-0">
+                <FollowUpList 
+                  emails={sortedEmails.filter(e => e.status === "failed")} 
+                  contacts={contacts} 
+                />
+              </TabsContent>
+            </CardContent>
           </Tabs>
         </CardHeader>
-        
-        <CardContent className="pt-6">
-          <TabsContent value="all" className="mt-0">
-            <FollowUpList emails={sortedEmails} contacts={contacts} />
-          </TabsContent>
-          
-          <TabsContent value="scheduled" className="mt-0">
-            <FollowUpList 
-              emails={sortedEmails.filter(e => e.status === "scheduled")} 
-              contacts={contacts} 
-            />
-          </TabsContent>
-          
-          <TabsContent value="sent" className="mt-0">
-            <FollowUpList 
-              emails={sortedEmails.filter(e => e.status === "sent")} 
-              contacts={contacts} 
-            />
-          </TabsContent>
-          
-          <TabsContent value="failed" className="mt-0">
-            <FollowUpList 
-              emails={sortedEmails.filter(e => e.status === "failed")} 
-              contacts={contacts} 
-            />
-          </TabsContent>
-        </CardContent>
       </Card>
     </div>
   );
