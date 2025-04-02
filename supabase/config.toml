@@ -1,1 +1,5 @@
+
 project_id = "gagzfzcfrezfurwhdbhj"
+
+[storage.business_cards]
+public = true

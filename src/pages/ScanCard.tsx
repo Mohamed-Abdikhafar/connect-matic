@@ -9,9 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useData } from "@/contexts/DataContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { useSupabaseFunction } from "@/hooks/useSupabaseFunction";
+import { v4 as uuidv4 } from 'uuid';
 
 interface ScanResult {
-  name: string;
+  full_name: string;
   email: string;
   phone: string;
   company: string;
@@ -22,9 +26,11 @@ interface ScanResult {
 const ScanCard = () => {
   const [step, setStep] = useState<'upload' | 'preview' | 'details' | 'notes'>('upload');
   const [isScanning, setIsScanning] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult>({
-    name: '',
+    full_name: '',
     email: '',
     phone: '',
     company: '',
@@ -33,72 +39,187 @@ const ScanCard = () => {
   });
   const [notes, setNotes] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
   const { addContact } = useData();
+  const { user } = useAuth();
+  
+  const processBusinessCard = useSupabaseFunction<{
+    success: boolean;
+    contact?: ScanResult;
+    extraction?: ScanResult;
+  }>('process-business-card');
 
   // Handle file upload
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setImageFile(file);
       // Preview the image
       const reader = new FileReader();
       reader.onload = () => {
         setUploadedImage(reader.result as string);
-        setIsScanning(true);
-        // Simulate OCR scanning
-        setTimeout(() => {
-          const mockData: ScanResult = {
-            name: "Alex Johnson",
-            email: "alex@techcompany.com",
-            phone: "123-456-7890",
-            company: "Tech Company Inc.",
-            website: "techcompany.com",
-            position: "Sales Director"
-          };
-          setScanResult(mockData);
-          setIsScanning(false);
-          setStep('preview');
-        }, 2000);
+        processImage(file);
       };
       reader.readAsDataURL(file);
     }
   };
 
-  // Handle camera capture (simulated)
-  const handleCameraCapture = () => {
-    toast({
-      title: "Camera activated",
-      description: "Position the business card within the frame for scanning.",
-    });
+  // Process image with OCR
+  const processImage = async (file: File) => {
+    setIsScanning(true);
     
-    // Simulate camera capture
-    setTimeout(() => {
-      setUploadedImage("/placeholder.svg"); // Using a placeholder image
-      setIsScanning(true);
+    try {
+      // Upload image to Supabase Storage
+      const fileName = `${user!.id}/${uuidv4()}-${file.name}`;
       
-      // Simulate OCR scanning
-      setTimeout(() => {
-        const mockData: ScanResult = {
-          name: "Taylor Smith",
-          email: "taylor@innovategroup.com",
-          phone: "555-123-4567",
-          company: "Innovate Group",
-          website: "innovategroup.com",
-          position: "Marketing Manager"
-        };
-        setScanResult(mockData);
-        setIsScanning(false);
-        setStep('preview');
-      }, 3000);
-    }, 1500);
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('business_cards')
+        .upload(fileName, file);
+      
+      if (uploadError) {
+        throw new Error(`Failed to upload image: ${uploadError.message}`);
+      }
+      
+      // Get public URL of the uploaded image
+      const { data: { publicUrl } } = supabase.storage
+        .from('business_cards')
+        .getPublicUrl(fileName);
+      
+      // Process with edge function
+      const { loading, error, execute } = processBusinessCard;
+      
+      const response = await execute({
+        imageUrl: publicUrl,
+        userId: user!.id
+      });
+      
+      if (error) {
+        throw error;
+      }
+      
+      if (response?.success && (response.contact || response.extraction)) {
+        const extractedData = response.contact || response.extraction;
+        if (extractedData) {
+          setScanResult({
+            full_name: extractedData.full_name || '',
+            email: extractedData.email || '',
+            phone: extractedData.phone || '',
+            company: extractedData.company || '',
+            website: extractedData.website || '',
+            position: extractedData.position || ''
+          });
+          
+          setStep('preview');
+        }
+      } else {
+        throw new Error('Failed to process business card');
+      }
+    } catch (error) {
+      console.error('Error processing card:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Processing failed',
+        description: error instanceof Error ? error.message : 'Failed to process business card'
+      });
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  // Handle camera capture
+  const handleCameraCapture = async () => {
+    setIsCapturing(true);
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: "environment" } 
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+        
+        toast({
+          title: "Camera activated",
+          description: "Position the business card within the frame and tap to capture.",
+        });
+      }
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Camera access failed',
+        description: 'Could not access your camera. Please check permissions.'
+      });
+      setIsCapturing(false);
+    }
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    
+    // Set canvas dimensions to match video feed
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Draw the current video frame to the canvas
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Convert canvas to file
+    canvas.toBlob(async (blob) => {
+      if (!blob) {
+        toast({
+          variant: 'destructive',
+          title: 'Capture failed',
+          description: 'Failed to capture image'
+        });
+        return;
+      }
+      
+      // Stop camera stream
+      const stream = video.srcObject as MediaStream;
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      setIsCapturing(false);
+      
+      // Create a file from the blob
+      const file = new File([blob], `card-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      setImageFile(file);
+      
+      // Set preview
+      const reader = new FileReader();
+      reader.onload = () => {
+        setUploadedImage(reader.result as string);
+        processImage(file);
+      };
+      reader.readAsDataURL(file);
+      
+    }, 'image/jpeg', 0.95);
   };
 
   const handleScanAgain = () => {
+    // Close camera stream if open
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+    }
+    
     setStep('upload');
     setUploadedImage(null);
+    setImageFile(null);
+    setIsCapturing(false);
     setScanResult({
-      name: '',
+      full_name: '',
       email: '',
       phone: '',
       company: '',
@@ -116,19 +237,40 @@ const ScanCard = () => {
     setStep('notes');
   };
 
-  const handleSaveContact = () => {
-    addContact({
-      ...scanResult,
-      notes,
-      tags: []
-    });
-    
-    toast({
-      title: "Contact saved",
-      description: "The contact has been added to your network."
-    });
-    
-    navigate("/contacts");
+  const handleSaveContact = async () => {
+    try {
+      await addContact({
+        name: scanResult.full_name,
+        email: scanResult.email,
+        phone: scanResult.phone,
+        company: scanResult.company,
+        website: scanResult.website,
+        position: scanResult.position,
+        notes
+      });
+      
+      toast({
+        title: "Contact saved",
+        description: "The contact has been added to your network."
+      });
+      
+      navigate("/contacts");
+    } catch (error) {
+      console.error('Error saving contact:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Failed to save contact',
+        description: error instanceof Error ? error.message : 'An error occurred'
+      });
+    }
+  };
+  
+  const cancelCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+    }
+    setIsCapturing(false);
   };
 
   return (
@@ -145,31 +287,56 @@ const ScanCard = () => {
                 </p>
               </div>
               
-              <div className="grid gap-6 md:grid-cols-2">
-                <Button 
-                  className="h-32 flex flex-col gap-2"
-                  onClick={handleCameraCapture}
-                >
-                  <Camera className="h-6 w-6" />
-                  <span>Use Camera</span>
-                </Button>
-                
-                <Button 
-                  variant="outline"
-                  className="h-32 flex flex-col gap-2"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload className="h-6 w-6" />
-                  <span>Upload Image</span>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-                </Button>
-              </div>
+              {isCapturing ? (
+                <div className="space-y-4">
+                  <div className="relative aspect-video bg-black rounded-md overflow-hidden">
+                    <video
+                      ref={videoRef}
+                      className="w-full h-full object-cover"
+                      autoPlay
+                      playsInline
+                    />
+                    <canvas ref={canvasRef} className="hidden" />
+                  </div>
+                  <div className="flex justify-between">
+                    <Button 
+                      variant="outline"
+                      onClick={cancelCamera}
+                    >
+                      Cancel
+                    </Button>
+                    <Button onClick={capturePhoto}>
+                      Capture
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-6 md:grid-cols-2">
+                  <Button 
+                    className="h-32 flex flex-col gap-2"
+                    onClick={handleCameraCapture}
+                  >
+                    <Camera className="h-6 w-6" />
+                    <span>Use Camera</span>
+                  </Button>
+                  
+                  <Button 
+                    variant="outline"
+                    className="h-32 flex flex-col gap-2"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload className="h-6 w-6" />
+                    <span>Upload Image</span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                  </Button>
+                </div>
+              )}
               
               <p className="text-sm text-center text-muted-foreground">
                 Supports JPEG, PNG, and most image formats.
@@ -210,7 +377,7 @@ const ScanCard = () => {
                     <ul className="space-y-2">
                       <li className="flex items-center justify-between">
                         <span className="text-muted-foreground">Name:</span>
-                        <span className="font-medium">{scanResult.name}</span>
+                        <span className="font-medium">{scanResult.full_name}</span>
                       </li>
                       <li className="flex items-center justify-between">
                         <span className="text-muted-foreground">Email:</span>
