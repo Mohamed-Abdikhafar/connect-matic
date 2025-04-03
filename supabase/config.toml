@@ -1,5 +1,7 @@
 
+# This is your Supabase project configuration file
 project_id = "gagzfzcfrezfurwhdbhj"
 
+[storage]
 [storage.business_cards]
 public = true
