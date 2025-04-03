@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
 
     // Process image with OpenAI Vision API
     try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -114,13 +114,13 @@ Deno.serve(async (req) => {
         })
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("OpenAI API error:", response.status, errorText);
-        throw new Error(`OpenAI API returned error: ${response.status} ${errorText}`);
+      if (!openAIResponse.ok) {
+        const errorText = await openAIResponse.text();
+        console.error("OpenAI API error:", openAIResponse.status, errorText);
+        throw new Error(`OpenAI API returned error: ${openAIResponse.status} ${errorText}`);
       }
 
-      const result = await response.json();
+      const result = await openAIResponse.json();
       
       // Check if we have a valid response with choices
       if (!result.choices || !result.choices[0] || !result.choices[0].message) {
