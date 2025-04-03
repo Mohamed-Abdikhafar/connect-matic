@@ -2,6 +2,6 @@
 # This is your Supabase project configuration file
 project_id = "gagzfzcfrezfurwhdbhj"
 
+[storage]
 [[storage.buckets]]
-name = "business_cards"
-public = true
+id = "business_cards"
