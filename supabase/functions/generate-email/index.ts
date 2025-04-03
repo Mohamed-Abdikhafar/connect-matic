@@ -50,6 +50,10 @@ Deno.serve(async (req) => {
       throw new Error(`Failed to fetch contact: ${contactError.message}`);
     }
 
+    if (!contact) {
+      throw new Error('Contact not found');
+    }
+
     // Get any existing notes for this contact
     const { data: existingNotes, error: notesError } = await supabase
       .from('synergy_notes')
@@ -68,12 +72,18 @@ Deno.serve(async (req) => {
       throw new Error(`Failed to fetch user data: ${userError.message}`);
     }
 
+    if (!userData) {
+      throw new Error('User data not found');
+    }
+
     // Combine notes
     let allNotes = notes || "";
     if (existingNotes?.notes) {
       allNotes = `${existingNotes.notes}\n\n${allNotes}`;
     }
 
+    console.log("Sending request to OpenAI API");
+    
     // Generate email with GPT-4
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -103,6 +113,13 @@ Deno.serve(async (req) => {
     });
 
     const result = await response.json();
+    console.log("OpenAI API response:", JSON.stringify(result));
+    
+    if (!result.choices || result.choices.length === 0 || !result.choices[0].message) {
+      console.error("Invalid response from OpenAI:", result);
+      throw new Error("Failed to generate email: Invalid response from OpenAI");
+    }
+    
     const emailContent = result.choices[0].message.content;
     
     // Save the new notes if they were provided
@@ -132,7 +149,7 @@ Deno.serve(async (req) => {
       }
     );
   } catch (error) {
-    console.error(error);
+    console.error("Error in generate-email function:", error);
     return new Response(
       JSON.stringify({ 
         success: false, 
